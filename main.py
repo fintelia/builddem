@@ -8,26 +8,32 @@ from geocube.api.core import make_geocube
 from rasterio import features
 import numpy as np
 from rasterio.warp import reproject, Resampling
+from pyproj import Transformer
 
+
+# Width and height of the output image in pixels
 width = 2000
 height = 2000
 
-neigborhoods = geopandas.read_file('Neighborhood_Map_Atlas_Neighborhoods.zip').to_crs("EPSG:32048")
-neighborhood = neigborhoods[neigborhoods['L_HOOD'] == 'Capitol Hill'].buffer(0)
-transform=rasterio.transform.from_bounds(*neighborhood.geometry.total_bounds, width, height)
+# Size of the area to be rendered in meters
+size = 1000
 
-if exists("Building_Outline_capitol_hill.geojson"):
-    buildings = geopandas.read_file("Building_Outline_capitol_hill.geojson")
-else:
-    buildings = geopandas.read_file('Building_Outline_2015_8791546178963768032.zip').to_crs("EPSG:32048")
-    buildings = buildings.clip(neighborhood.geometry.total_bounds)
-    buildings.to_file("Building_Outline_capitol_hill.geojson", driver='GeoJSON')
+# Center of the area to be rendered in latitude and longitude (WGS84)
+center = (47.6182177390292, -122.31919478639601)
+
+# Coordinate reference system of the output image
+crs = "EPSG:3689"
+
+transformer = Transformer.from_crs("EPSG:4326", crs)
+center = transformer.transform(center[0], center[1])
+bounds = (center[0] - size/2, center[1] - size/2, center[0] + size/2, center[1] + size/2)
+transform=rasterio.transform.from_bounds(*bounds, width, height)
+
+buildings = geopandas.read_file('Building_Outline_2015_8791546178963768032.zip').to_crs(crs)
+buildings = buildings.clip(bounds)
 buildings['apex'] = buildings['BP99_APEX'] * 0.3048
 buildings = buildings.loc[buildings['geometry'].is_valid, :]
 buildings = buildings.loc[buildings['apex'] > 0, :]
-
-# buildings = buildings.loc[buildings.within(neighborhood.geometry.union_all()), :]
-
 
 elevation = rasterio.open('USGS_1M_10_x55y528_WA_KingCounty_2021_B21.tif')
 
@@ -39,10 +45,10 @@ reproject(
     src_transform=elevation.transform,
     src_crs=elevation.crs,
     dst_transform=transform,
-    dst_crs="EPSG:32048",
+    dst_crs="EPSG:3689",
     resampling=Resampling.nearest)
 
-with rasterio.open("output.tif", 'w+', driver="GTiff", width=width, height=height, crs="EPSG:32048", count=1, dtype=rasterio.float32, compress="lzw", transform=transform, nodata=0) as out:
+with rasterio.open("output.tif", 'w+', driver="GTiff", width=width, height=height, crs=crs, count=1, dtype=rasterio.float32, compress="lzw", transform=transform, nodata=0) as out:
     out.write(elevation_transformed, 1)
     out_arr = out.read(1)
 
